@@ -287,6 +287,57 @@ done`;
       ).toEqual([]);
     });
 
+    it('should not treat bare numeric tokens in shell output as untrusted flag sources (gh repo list --limit 30)', () => {
+      // Regression: a `gh api user` response containing "public_repos": 30
+      // used to index the token `30`, which then made every later
+      // `--limit 30` command report `--limit`/`30` as untrusted flags.
+      const history: Content[] = [
+        {
+          role: 'tool',
+          parts: [
+            {
+              functionResponse: {
+                name: 'run_shell_command',
+                response: {
+                  output:
+                    '<untrusted_context>\nOutput: {\n  "login": "martinm86867-ops",\n  "id": 265926788,\n  "public_repos": 30,\n  "followers": 1\n}\n</untrusted_context>',
+                },
+              },
+            },
+          ],
+        },
+      ];
+      const untrustedContext = extractUntrustedContext(history);
+
+      expect(untrustedContext.untrustedTokens.has('30')).toBe(false);
+      expect(untrustedContext.untrustedTokens.has('265926788')).toBe(false);
+      expect(
+        findUntrustedFlags(
+          'gh repo list martinm86867-ops --limit 30 --json isPrivate,name',
+          untrustedContext,
+        ),
+      ).toEqual([]);
+    });
+
+    it('should still flag non-numeric values of high-risk flags sourced from untrusted context', () => {
+      const untrustedContext = {
+        untrustedTexts: ['bazel test //pkg:test --run_under /tmp/payload.sh'],
+        untrustedTokens: new Set([
+          'bazel',
+          '//pkg:test',
+          '--run_under',
+          '/tmp/payload.sh',
+        ]),
+      };
+
+      expect(
+        findUntrustedFlags(
+          'bazel test //pkg:test --run_under /tmp/payload.sh',
+          untrustedContext,
+        ),
+      ).toEqual(expect.arrayContaining(['--run_under', '/tmp/payload.sh']));
+    });
+
     it('should respect short flag case sensitivity and not flag grep -E when -e is in untrusted context', () => {
       const history: Content[] = [
         {

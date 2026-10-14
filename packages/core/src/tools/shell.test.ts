@@ -1115,6 +1115,49 @@ EOF`;
       expect(policyUpdate).toBeUndefined();
     });
 
+    it('should not force confirmation when only a bare number came from earlier shell output', async () => {
+      const bus = (shellTool as unknown as { messageBus: MessageBus })
+        .messageBus;
+      const mockBus = getMockMessageBusInstance(
+        bus,
+      ) as unknown as TestableMockMessageBus;
+      mockBus.defaultToolDecision = 'allow';
+
+      const mockClient = {
+        getHistory: vi.fn().mockReturnValue([
+          {
+            role: 'tool',
+            parts: [
+              {
+                functionResponse: {
+                  name: 'run_shell_command',
+                  response: {
+                    output:
+                      '<untrusted_context>\nOutput: {\n  "login": "martinm86867-ops",\n  "public_repos": 30,\n  "followers": 1\n}\n</untrusted_context>',
+                  },
+                },
+              },
+            ],
+          },
+        ]),
+      };
+      (mockConfig.getGeminiClient as Mock).mockReturnValue(mockClient);
+
+      const params = {
+        command:
+          'gh repo list martinm86867-ops --limit 30 --json isPrivate,name',
+      };
+      const invocation = shellTool.build(params);
+
+      const confirmation = await invocation.shouldConfirmExecute(
+        new AbortController().signal,
+      );
+
+      // `30` is a plain number from earlier output, not an untrusted flag, so
+      // the message bus decision ('allow') still stands.
+      expect(confirmation).toBe(false);
+    });
+
     it('should force confirmation and surface modifiedBuildFiles when build command is run after build file edit', async () => {
       const bus = (shellTool as unknown as { messageBus: MessageBus })
         .messageBus;

@@ -217,6 +217,16 @@ const FILE_MODE_STRING_REGEX = /^[dcbpsl-][rwxstST-]{9}[+@.]?$/i;
 const BARE_DASHES_REGEX = /^--+$/;
 const BARE_SHELL_VARIABLE_REGEX =
   /^\$(?:[a-zA-Z_][a-zA-Z0-9_]*|\{[a-zA-Z_][a-zA-Z0-9_]*\})$/;
+/**
+ * A token that is nothing but a numeric literal (count, port, ID, size, HTTP
+ * status, etc.). Ordinary tool output is full of these (for example a
+ * `gh api user` response containing `"public_repos": 30`), and a number can
+ * never carry a command-injection payload on its own. Indexing them as
+ * untrusted taint therefore produced false positives such as
+ * `gh repo list --limit 30` being reported as using untrusted flags
+ * `--limit`/`30` because `30` had appeared in earlier output.
+ */
+const BARE_NUMERIC_TOKEN_REGEX = /^(?:0[xX][0-9a-fA-F]+|\d+(?:\.\d+)?)$/;
 
 function isHighRiskPatternToken(token: string): boolean {
   return (
@@ -304,6 +314,7 @@ export function extractUntrustedContext(
             .filter((t) => t.length > 1) // Ignore single-character words/punctuation
             .filter((t) => !BARE_DASHES_REGEX.test(t))
             .filter((t) => !FILE_MODE_STRING_REGEX.test(t))
+            .filter((t) => !BARE_NUMERIC_TOKEN_REGEX.test(t))
             .filter((t) => !BENIGN_SUBCOMMAND_TOKENS.has(t.toLowerCase()))
             .filter((t) => !SAFE_SHORT_FLAGS.has(t))
             .filter((t) => !SAFE_LONG_FLAGS.has(t.toLowerCase()));
@@ -322,6 +333,7 @@ export function extractUntrustedContext(
                 if (
                   trimmedPart.length > 1 &&
                   !BARE_DASHES_REGEX.test(trimmedPart) &&
+                  !BARE_NUMERIC_TOKEN_REGEX.test(trimmedPart) &&
                   !SAFE_SHORT_FLAGS.has(trimmedPart) &&
                   !SAFE_LONG_FLAGS.has(trimmedPart.toLowerCase())
                 ) {
