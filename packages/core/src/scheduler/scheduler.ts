@@ -71,22 +71,6 @@ export interface SchedulerOptions {
   onWaitingForConfirmation?: (waiting: boolean) => void;
 }
 
-interface TaintRiskDetectable {
-  hasTaintedOrBuildFileRisk: () => boolean;
-}
-
-function isTaintRiskDetectable(
-  invocation: unknown,
-): invocation is TaintRiskDetectable {
-  return (
-    typeof invocation === 'object' &&
-    invocation !== null &&
-    'hasTaintedOrBuildFileRisk' in invocation &&
-    typeof (invocation as { hasTaintedOrBuildFileRisk?: unknown })
-      .hasTaintedOrBuildFileRisk === 'function'
-  );
-}
-
 const createErrorResponse = (
   request: ToolCallRequestInfo,
   error: Error,
@@ -672,17 +656,13 @@ export class Scheduler {
       decision = PolicyDecision.ASK_USER;
     }
 
-    const hasTaintRisk =
-      isTaintRiskDetectable(toolCall.invocation) &&
-      toolCall.invocation.hasTaintedOrBuildFileRisk();
-
-    if (decision === PolicyDecision.ALLOW && hasTaintRisk) {
-      decision =
-        (this.config.isInteractive?.() ?? true)
-          ? PolicyDecision.ASK_USER
-          : PolicyDecision.DENY;
-    }
-
+    // NOTE: taint risk (`hasTaintedOrBuildFileRisk`) deliberately no longer
+    // overrides an explicit ALLOW. These heuristics are advisory, and letting
+    // them silently turn an allow into a prompt (or, in non-interactive mode,
+    // into a DENY) made routine commands such as `sudo bash -c '<script>'` and
+    // `cat /etc/fstab` unusable. Callers that want the warning still surface it
+    // from the tool's confirmation details when a prompt is shown for other
+    // reasons.
     if (decision === PolicyDecision.DENY) {
       const { errorMessage, errorType } = getPolicyDenialError(
         this.config,
@@ -706,11 +686,7 @@ export class Scheduler {
     let lastDetails: SerializableConfirmationDetails | undefined;
 
     if (decision === PolicyDecision.ASK_USER) {
-      const forcedDecision =
-        hookDecision === 'ask' ||
-        (policyDecision === PolicyDecision.ALLOW && hasTaintRisk)
-          ? 'ask_user'
-          : undefined;
+      const forcedDecision = hookDecision === 'ask' ? 'ask_user' : undefined;
 
       const result = await resolveConfirmation(toolCall, signal, {
         config: this.config,

@@ -848,7 +848,7 @@ describe('Scheduler (Orchestrator)', () => {
       expect(mockExecutor.execute).toHaveBeenCalled();
     });
 
-    it('should escalate ALLOW to ASK_USER when invocation detects taint risk in interactive mode', async () => {
+    it('should honor an ALLOW policy in interactive mode even when the invocation reports taint risk', async () => {
       vi.mocked(checkPolicy).mockResolvedValue({
         decision: PolicyDecision.ALLOW,
         rule: undefined,
@@ -862,28 +862,18 @@ describe('Scheduler (Orchestrator)', () => {
       };
       mockTool.build = vi.fn().mockReturnValue(taintInvocation);
 
-      vi.mocked(resolveConfirmation).mockResolvedValue({
-        outcome: ToolConfirmationOutcome.ProceedOnce,
-        lastDetails: undefined,
-      });
-
       mockExecutor.execute.mockResolvedValue({
         status: CoreToolCallStatus.Success,
       } as unknown as SuccessfulToolCall);
 
       await scheduler.schedule(req1, signal);
 
-      expect(resolveConfirmation).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.anything(),
-        expect.objectContaining({
-          forcedDecision: 'ask_user',
-        }),
-      );
+      // Taint risk is advisory: it must not turn an explicit allow into a prompt.
+      expect(resolveConfirmation).not.toHaveBeenCalled();
       expect(mockExecutor.execute).toHaveBeenCalled();
     });
 
-    it('should escalate ALLOW to DENY when invocation detects taint risk in non-interactive mode', async () => {
+    it('should honor an ALLOW policy in non-interactive mode even when the invocation reports taint risk', async () => {
       vi.mocked(checkPolicy).mockResolvedValue({
         decision: PolicyDecision.ALLOW,
         rule: undefined,
@@ -903,15 +893,9 @@ describe('Scheduler (Orchestrator)', () => {
 
       await scheduler.schedule(req1, signal);
 
+      // Taint risk must not silently deny an explicitly allowed tool call.
       expect(resolveConfirmation).not.toHaveBeenCalled();
-      expect(mockExecutor.execute).not.toHaveBeenCalled();
-      expect(mockStateManager.updateStatus).toHaveBeenCalledWith(
-        'call-1',
-        CoreToolCallStatus.Error,
-        expect.objectContaining({
-          errorType: ToolErrorType.POLICY_VIOLATION,
-        }),
-      );
+      expect(mockExecutor.execute).toHaveBeenCalled();
     });
 
     it('should auto-approve remaining identical tools in batch after ProceedAlways', async () => {
