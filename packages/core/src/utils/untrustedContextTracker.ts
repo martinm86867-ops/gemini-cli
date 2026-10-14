@@ -227,6 +227,13 @@ const BARE_SHELL_VARIABLE_REGEX =
  * `--limit`/`30` because `30` had appeared in earlier output.
  */
 const BARE_NUMERIC_TOKEN_REGEX = /^(?:0[xX][0-9a-fA-F]+|\d+(?:\.\d+)?)$/;
+/**
+ * Minimum length for the space-separated value of a high-risk flag to be
+ * accepted as a substring of untrusted text. A copied payload such as
+ * `bash -c 'rm -rf /'` is multi-word, whereas an incidental short word from
+ * ordinary output is not meaningful evidence that the value was untrusted.
+ */
+const MIN_UNTRUSTED_VALUE_SUBSTRING_LENGTH = 6;
 
 function isHighRiskPatternToken(token: string): boolean {
   return (
@@ -442,14 +449,23 @@ export function findUntrustedFlags(
       const tokenToLookup = isShortFlag ? rawFlagName : lowerToken;
       const flagToLookup = isShortFlag ? rawFlagName : flagToCheck;
 
-      // Check 1A: Full flag or flag name exists in untrusted tokens (unless it is a known safe flag)
+      // Check 1A: Full flag or flag name exists in untrusted tokens (unless it
+      // is a known safe flag).
+      //
+      // Flags that take a command or configuration value are exempt when they
+      // have no attached value: the flag name alone is far too weak a signal.
+      // `-c` shows up in every `ps` listing and in `grep -c`, which used to
+      // taint it for the rest of the session and then flag unrelated commands
+      // such as `sudo bash -c '<script written by the model>'`. Those flags are
+      // only reported when their *value* is traceable to untrusted input
+      // (checks 1B and 1C below).
       if (
         !isSafeFlag &&
         (untrustedContext.untrustedTokens.has(tokenToLookup) ||
           untrustedContext.untrustedTokens.has(flagToLookup))
       ) {
-        detected.add(token);
-        if (token.includes('=') || !isHighRiskFlag) {
+        if (!isHighRiskFlag || token.includes('=')) {
+          detected.add(token);
           continue;
         }
       }
@@ -470,20 +486,29 @@ export function findUntrustedFlags(
         }
       }
 
-      // Check 1C: Space-separated argument for high-risk value-taking flags
+      // Check 1C: Space-separated argument for high-risk value-taking flags.
       if (!token.includes('=') && isHighRiskFlag) {
         const nextToken = rawTokens[i + 1];
         if (
           nextToken &&
           !nextToken.startsWith('-') &&
           !BARE_SHELL_VARIABLE_REGEX.test(nextToken) &&
-          !BENIGN_SUBCOMMAND_TOKENS.has(nextToken.toLowerCase()) &&
-          (untrustedContext.untrustedTokens.has(nextToken.toLowerCase()) ||
-            (isHighRiskPatternToken(nextToken) &&
-              hasUntrustedSubstring(untrustedContext, nextToken)))
+          !BENIGN_SUBCOMMAND_TOKENS.has(nextToken.toLowerCase())
         ) {
-          detected.add(token);
-          detected.add(nextToken);
+          const isExactUntrustedValue = untrustedContext.untrustedTokens.has(
+            nextToken.toLowerCase(),
+          );
+          // A copied payload can be a multi-word script, so exact token
+          // matching alone is not enough; fall back to a substring match for
+          // values long enough to be meaningful.
+          const isUntrustedValueSubstring =
+            (isHighRiskPatternToken(nextToken) ||
+              nextToken.length >= MIN_UNTRUSTED_VALUE_SUBSTRING_LENGTH) &&
+            hasUntrustedSubstring(untrustedContext, nextToken);
+          if (isExactUntrustedValue || isUntrustedValueSubstring) {
+            detected.add(token);
+            detected.add(nextToken);
+          }
         }
       }
     } else {

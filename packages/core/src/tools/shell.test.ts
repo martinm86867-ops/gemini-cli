@@ -1158,6 +1158,45 @@ EOF`;
       expect(confirmation).toBe(false);
     });
 
+    it('should not force confirmation when a high-risk flag name only appeared incidentally', async () => {
+      const bus = (shellTool as unknown as { messageBus: MessageBus })
+        .messageBus;
+      const mockBus = getMockMessageBusInstance(
+        bus,
+      ) as unknown as TestableMockMessageBus;
+      mockBus.defaultToolDecision = 'allow';
+
+      const mockClient = {
+        getHistory: vi.fn().mockReturnValue([
+          {
+            role: 'tool',
+            parts: [
+              {
+                functionResponse: {
+                  name: 'run_shell_command',
+                  response: {
+                    output:
+                      '<untrusted_context>\nOutput: martin 85653 50336 02:25 pts/1 00:00:00 /usr/bin/bash -c shopt -u promptvars\n</untrusted_context>',
+                  },
+                },
+              },
+            ],
+          },
+        ]),
+      };
+      (mockConfig.getGeminiClient as Mock).mockReturnValue(mockClient);
+
+      const params = { command: "sudo bash -c '\ndf -h\n'" };
+      const invocation = shellTool.build(params);
+
+      const confirmation = await invocation.shouldConfirmExecute(
+        new AbortController().signal,
+      );
+
+      // `ps` output mentions `-c`, but this script was not sourced from it.
+      expect(confirmation).toBe(false);
+    });
+
     it('should force confirmation and surface modifiedBuildFiles when build command is run after build file edit', async () => {
       const bus = (shellTool as unknown as { messageBus: MessageBus })
         .messageBus;
